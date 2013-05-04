@@ -593,6 +593,7 @@ int match(char *def,
 
 int main()
 {
+  char *helo_domain = NULL;
   char *mailfrom = NULL;
   char *rcptto   = NULL;
   char *nomatch  = NULL;
@@ -605,6 +606,8 @@ int main()
 
   if (getenv("RELAYCLIENT"))
     return 0;
+
+  helo_domain = getenv("SMTPHELOHOST");
 
   g_remote = getenv("TCPREMOTEIP");
   if (!g_remote)
@@ -651,12 +654,13 @@ int main()
       if (match(def, cmd, mailfrom, rcptto))
 	{
 	  fprintf(stderr,
-		  LOGR "match: def #%d ('%s').  mailfrom='%s', rcptto='%s'\n",
+		  "sender=%s(%s):mailfrom='%s':rcptto='%s':match=def #%d ('%s')\n",
+		  helo_domain,
 		  g_remote,
-		  i,
-		  def,
 		  mailfrom,
-		  rcptto);
+		  rcptto,
+		  i,
+		  def);
 	  fMatch = 1;
 	  break;
 	}
@@ -665,10 +669,11 @@ int main()
   if (0 == fMatch)
     {
       fprintf(stderr,
-	      LOGR "nomatch: mailfrom='%s', rcptto='%s'\n",
+	      "sender=%s(%s):mailfrom='%s': rcptto='%s':nomatch [%d filters]\n",
+	      helo_domain, 
 	      g_remote,
 	      mailfrom,
-	      rcptto);
+	      rcptto, i - 1);
       if (NULL != (nomatch = getenv("SPP_FILTER_NOMATCH_CMD")))
 	envcmd(nomatch, NULL);
     }
