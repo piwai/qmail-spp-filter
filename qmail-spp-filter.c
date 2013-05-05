@@ -166,22 +166,19 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <syslog.h>
 
 #include <cdb.h>
 #ifndef TINYCDB_VERSION
 #include <cdb_make.h>
 #endif // TINYCDB_VERSION
 
-#define LOG "qmail-spp-filter: "
-#define LOGR "qmail-spp-filter:%s: "
 #define SEND_FILTER_DEF "send-filter-def"
 #define SEND_FILTER_DEF_LEN 15
 
 char *g_remote;
 
-
-void envcmd(char *envstr,
-            char *def)
+void envcmd(char *envstr, char *def)
 {
   char *p;
 
@@ -235,8 +232,7 @@ void cleanse(char *szLine)
 
 
 // Return 1 if there was a match.  0 otherwise (including on error).
-int matchregex(char *filename,
-	       char *key)
+int matchregex(char *filename, char *key)
 {
   FILE *fp = fopen(filename, "r");
   char szLine[256];
@@ -245,14 +241,11 @@ int matchregex(char *filename,
   char szError[256];
   int fMatch = 0;
 
-  if (NULL == fp)
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: fopen(\"%s\") failed: %m\n",
-	      g_remote,
-	      filename);
-      goto done;
-    }
+  if (NULL == fp)  {
+    syslog(LOG_ERR, "ERROR: fopen(\"%s\") failed: %m\n",
+	   filename);
+    goto done;
+  }
 
   *szLine = '^';  // every line starts with a '^' regex beginning of line
 
@@ -264,20 +257,14 @@ int matchregex(char *filename,
 
       strcat(szLine, "$");  // every line ends with a '$' regex end of line
 
-      // fprintf(stderr, LOGR "regex: '%s'\n", g_remote, szLine);
-      
       re_error = regcomp(&re, szLine, REG_EXTENDED | REG_ICASE | REG_NOSUB);
-      if (0 != re_error)
-	{
+      if (0 != re_error) {
 	  regerror(re_error, &re, szError, sizeof(szError));
-	  fprintf(stderr,
-		  LOGR "ERROR: regcomp(\"%s\") failed: %s\n",
-		  g_remote,
-		  szLine,
-		  szError);
+	  syslog(LOG_ERR, "ERROR: regcomp(\"%s\") failed: %s\n",
+		 szLine, szError);
 	  regfree(&re);
 	  goto done;
-	}
+      }
 
       if (0 == regexec(&re, key, 0, NULL, 0))
 	{
@@ -294,8 +281,7 @@ int matchregex(char *filename,
 
 
 // Returns 1 on success, 0 on failure.
-int cdbmake(char *textfilename,
-            char *cdbfilename)
+int cdbmake(char *textfilename, char *cdbfilename)
 {
   struct cdb_make cdbm;
   int cdbinited = 0;
@@ -305,92 +291,65 @@ int cdbmake(char *textfilename,
   char szLine[256];
   int ret = 0;
 
-  if (NULL == (fptxt = fopen(textfilename, "r")))
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: fopen(\"%s\") failed: %m\n",
-	      g_remote,
-	      textfilename);
-      goto done;
-    }
+  if (NULL == (fptxt = fopen(textfilename, "r"))) {
+    syslog(LOG_ERR, "ERROR: fopen(\"%s\") failed: %m\n",
+	   textfilename);
+    goto done;
+  }
 
   snprintf(cdbtempfilename,
 	   sizeof(cdbtempfilename),
 	   "%s.%u",
 	   cdbfilename,
 	   getpid());
-  fprintf(stderr, LOGR "cdbmake: Making '%s'\n", g_remote, cdbtempfilename);
 
-  if (-1 == (fdcdb = open(cdbtempfilename, O_RDWR | O_CREAT | O_TRUNC, 0666)))
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: open(\"%s\") failed: %m\n",
-	      g_remote,
-	      cdbtempfilename);
-      goto done;
-    }
+  if (-1 == (fdcdb = open(cdbtempfilename, O_RDWR | O_CREAT | O_TRUNC, 0666))) {
+    syslog(LOG_ERR, "ERROR: open(\"%s\") failed: %m\n",
+	   cdbtempfilename);
+    goto done;
+  }
 
-  if (0 != cdb_make_start(&cdbm, fdcdb))
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: cdb_make_start() failed: %m\n",
-	      g_remote);
-      goto done;
-    }
+  if (0 != cdb_make_start(&cdbm, fdcdb)) {
+    syslog(LOG_ERR, "ERROR: cdb_make_start() failed: %m\n");
+    goto done;
+  }
   cdbinited = 1;
 
-  while (NULL != fgets(szLine, sizeof(szLine), fptxt))
-    {
-      cleanse(szLine);
-      if (0 == *szLine) continue;  // skip blank lines
+  while (NULL != fgets(szLine, sizeof(szLine), fptxt)) {
+    cleanse(szLine);
+    if (0 == *szLine) continue;  // skip blank lines
 
-      // fprintf(stderr, LOGR "cdbmake: '%s'\n", g_remote, szLine);
-
-      // we don't worry about duplicates
-      if (0 != cdb_make_add(&cdbm, szLine, strlen(szLine), NULL, 0))
-	{
-	  fprintf(stderr,
-		  LOGR "ERROR: cdb_make_add(\"%s\") failed: %m\n",
-		  g_remote,
-		  szLine);
-	  goto done;
-	}
+    // we don't worry about duplicates
+    if (0 != cdb_make_add(&cdbm, szLine, strlen(szLine), NULL, 0)) {
+      syslog(LOG_ERR, "ERROR: cdb_make_add(\"%s\") failed: %m\n",
+	     szLine);
+      goto done;
     }
+  }
 
   // Success!
   ret = 1;
 
  done:
-  if (1 == cdbinited)
-    {
-      if (0 != cdb_make_finish(&cdbm))
-	{
-	  fprintf(stderr,
-		  LOGR "ERROR: cdb_make_finish() failed: %m\n",
-		  g_remote);
-	}
-      cdbinited = 0;
+  if (1 == cdbinited) {
+    if (0 != cdb_make_finish(&cdbm)) {
+      syslog(LOG_ERR, "ERROR: cdb_make_finish() failed: %m\n" );
     }
+    cdbinited = 0;
+  }
 
-  if (-1 != fdcdb && -1 == close(fdcdb))
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: close(\"%s\") failed: %m\n",
-	      g_remote,
-	      cdbtempfilename);
-      ret = 0;
-    }
+  if (-1 != fdcdb && -1 == close(fdcdb)) {
+    syslog(LOG_ERR, "ERROR: close(\"%s\") failed: %m\n",
+	   cdbtempfilename);
+    ret = 0;
+  }
   fdcdb = -1;
 
-  if (1 == ret && -1 == rename(cdbtempfilename, cdbfilename))
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: rename(\"%s\",\"%s\") failed: %m\n",
-	      g_remote,
-	      cdbtempfilename,
-	      cdbfilename);
-      ret = 0;
-    }
+  if (1 == ret && -1 == rename(cdbtempfilename, cdbfilename)) {
+    syslog(LOG_ERR, "ERROR: rename(\"%s\",\"%s\") failed: %m\n",
+	   cdbtempfilename, cdbfilename);
+    ret = 0;
+  }
 
   if (NULL != fptxt)
     fclose(fptxt);
@@ -401,22 +360,16 @@ int cdbmake(char *textfilename,
 
 
 // Returns fd or -1 on failure.
-int cdbopen(char *textfilename,
-	    char *cdbfilename)
+int cdbopen(char *textfilename, char *cdbfilename)
 {
   struct stat stattxt, statcdb;
   int fd = -1;
 
-  // fprintf(stderr, LOGR "cdbopen: '%s'\n", g_remote, textfilename);
-
-  if (-1 == stat(textfilename, &stattxt))
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: stat(\"%s\") failed: %m\n",
-	      g_remote,
-	      textfilename);
-      return -1;
-    }
+  if (-1 == stat(textfilename, &stattxt)) {
+    syslog(LOG_ERR, "ERROR: stat(\"%s\") failed: %m\n",
+	   textfilename);
+    return -1;
+  }
 
   if (-1 == stat(cdbfilename, &statcdb) ||
       stattxt.st_mtime > statcdb.st_mtime)
@@ -427,22 +380,18 @@ int cdbopen(char *textfilename,
 	}
     }
 
-  if (-1 == (fd = open(cdbfilename, O_RDONLY)))
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: open(\"%s\") failed: %m\n",
-	      g_remote,
-	      cdbfilename);
-      return -1;
-    }
+  if (-1 == (fd = open(cdbfilename, O_RDONLY))) {
+    syslog(LOG_ERR, "ERROR: open(\"%s\") failed: %m\n",
+	   cdbfilename);
+    return -1;
+  }
 
   return fd;
 }
 
 
 // Return 1 if there was a match.  0 otherwise (including on error).
-int matchtxt(struct cdb *pcdb,
-	     char *key)
+int matchtxt(struct cdb *pcdb, char *key)
 {
   int result = cdb_find(pcdb, key, strlen(key));
 
@@ -451,14 +400,10 @@ int matchtxt(struct cdb *pcdb,
       return 1;
     }
 
-  if (result < 0)
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: cdb_seek(\"%s\") failed: %m\n",
-	      g_remote,
-	      key);
-    }
-
+  if (result < 0) {
+    syslog(LOG_ERR, "ERROR: cdb_seek(\"%s\") failed: %m\n",
+	   key);
+  }
   return 0;
 }
 
@@ -492,10 +437,7 @@ int matchip(struct cdb *pcdb)
 
 
 // Return 1 if there was a match.  0 otherwise (including on error).
-int match(char *def,
-	  char *cmd,
-	  char *mailfrom,
-	  char *rcptto)
+int match(char *def, char *cmd, char *mailfrom, char *rcptto)
 {
   int fIP = 0;
   int fFrom = 0;
@@ -517,34 +459,21 @@ int match(char *def,
       if (!strncasecmp(def, "rcpt:", 5)) fRcptto = 1;
     }
 
-  if (!fIP && !fFrom && !fRcptto)
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: Filter definition \"%s\" is not of format "
-	      "\"type:pathname\" where type is one of \"ip\", \"from\", "
-	      "\"regexfrom\", \"rcpt\" or \"regexrcpt\"!\n",
-	      g_remote,
-              def);
+  if (!fIP && !fFrom && !fRcptto) {
+    syslog(LOG_ERR, "ERROR: Filter definition \"%s\" is not of format "
+	   "\"type:pathname\" where type is one of \"ip\", \"from\", "
+	   "\"regexfrom\", \"rcpt\" or \"regexrcpt\"!\n", def);
       return 0;
-    }
+  }
 
   textfilename = strchr(def, ':');
-  if (NULL == textfilename || 0 == textfilename[1])
-    {
-      fprintf(stderr,
-	      LOGR "ERROR: Filter definition \"%s\" is not of format "
-	      "\"type:pathname\"!\n",
-	      g_remote,
-	      def);
-      return 0;
-    }
+  if (NULL == textfilename || 0 == textfilename[1]) {
+    syslog(LOG_ERR, "ERROR: Filter definition \"%s\" is not of format "
+	      "\"type:pathname\"!\n", def);
+    return 0;
+  }
   textfilename++;
 
-#if 0
-  fprintf(stderr,
-	  LOGR "regex=%d, ip=%d, from=%d, rcptto=%d, textfilename='%s'\n",
-	  g_remote, fRegex, fIP, fFrom, fRcptto, textfilename);
-#endif
 
   if (fRegex)
     {
@@ -570,13 +499,10 @@ int match(char *def,
 	fMatch = matchtxt(&cdb, fFrom ? mailfrom : rcptto);
 
       cdb_free(&cdb);
-      if (-1 == close(cdbfd))
-	{
-	  fprintf(stderr,
-		  LOGR "ERROR: close(\"%s\") failed: %m\n",
-		  g_remote,
-		  cdbfilename);
-	}
+      if (-1 == close(cdbfd)) {
+	syslog(LOG_ERR, "ERROR: close(\"%s\") failed: %m\n",
+	       cdbfilename);
+      }
     }
 
   if (fMatch)
@@ -607,76 +533,55 @@ int main()
   if (getenv("RELAYCLIENT"))
     return 0;
 
+  openlog("qmail-spp", LOG_PID, LOG_LOCAL1);
   helo_domain = getenv("SMTPHELOHOST");
 
   g_remote = getenv("TCPREMOTEIP");
   if (!g_remote)
     g_remote = getenv("TCP6REMOTEIP");
-  if (!g_remote)
-    {
-      fprintf(stderr, LOG "ERROR: can't read TCPREMOTEIP or TCP6REMOTEIP\n");
-      return 0;
-    }
-  if (!(mailfrom = getenv("SMTPMAILFROM")))
-    {
-      fprintf(stderr,
-	      LOGR "can't read SMTPMAILFROM\n",
-	      g_remote);
-      return 0;
-    }
-  if (!(rcptto = getenv("SMTPRCPTTO")))
-    {
-      fprintf(stderr,
-	      LOGR "can't read SMTPRCPTTO\n",
-	      g_remote);
-      return 0;
+  if (!g_remote) {
+    syslog(LOG_ERR, "ERROR: can't read TCPREMOTEIP or TCP6REMOTEIP\n");
+    goto _end;
+  }
+  if (!(mailfrom = getenv("SMTPMAILFROM"))) {
+    syslog(LOG_ERR, "ip=%s:can't read SMTPMAILFROM\n", g_remote);
+    goto _end;
+  }
+  if (!(rcptto = getenv("SMTPRCPTTO"))) {
+    syslog(LOG_ERR, "ip=%s:can't read SMTPRCPTTO\n", g_remote);
+    goto _end;
+  }
+
+  for (i = 1; i <= MAX_FILTER_COUNT; i++) {
+    snprintf(defname, sizeof(defname), "SPP_FILTER_%d_DEF", i);
+    snprintf(cmdname, sizeof(cmdname), "SPP_FILTER_%d_CMD", i);
+    def = getenv(defname);
+    cmd = getenv(cmdname);
+    if (!(def && cmd)) {
+      if (def || cmd) {
+	syslog(LOG_DEBUG, "ERROR: %s envar defined, but %s was not!\n",
+	       def == NULL ? cmdname : defname,
+	       cmd == NULL ? cmdname : defname);
+      }
+      break;
     }
 
-  for (i = 1; i <= MAX_FILTER_COUNT; i++)
-    {
-      snprintf(defname, sizeof(defname), "SPP_FILTER_%d_DEF", i);
-      snprintf(cmdname, sizeof(cmdname), "SPP_FILTER_%d_CMD", i);
-      def = getenv(defname);
-      cmd = getenv(cmdname);
-      if (!(def && cmd))
-	{
-	  if (def || cmd)
-	    {
-	      fprintf(stderr,
-		      LOGR "ERROR: %s envar defined, but %s was not!\n",
-		      g_remote,
-		      def == NULL ? cmdname : defname,
-		      cmd == NULL ? cmdname : defname);
-	    }
-	  break;
-	}
-
-      if (match(def, cmd, mailfrom, rcptto))
-	{
-	  fprintf(stderr,
-		  "sender=%s(%s):mailfrom='%s':rcptto='%s':match=def #%d ('%s')\n",
-		  helo_domain,
-		  g_remote,
-		  mailfrom,
-		  rcptto,
-		  i,
-		  def);
-	  fMatch = 1;
-	  break;
-	}
+    if (match(def, cmd, mailfrom, rcptto)) {
+      syslog(LOG_DEBUG, "ip=%s:helo=%s:mailfrom='%s':rcptto='%s':match=%d:file=%s\n",
+	     g_remote,helo_domain,mailfrom,rcptto,i,def);
+      fMatch = 1;
+      break;
     }
+  }
 
-  if (0 == fMatch)
-    {
-      fprintf(stderr,
-	      "sender=%s(%s):mailfrom='%s': rcptto='%s':nomatch [%d filters]\n",
-	      helo_domain, 
-	      g_remote,
-	      mailfrom,
-	      rcptto, i - 1);
-      if (NULL != (nomatch = getenv("SPP_FILTER_NOMATCH_CMD")))
-	envcmd(nomatch, NULL);
-    }
-      
+  if (0 == fMatch) {
+    syslog(LOG_DEBUG,"ip=%s:helo=%s:mailfrom='%s':rcptto='%s':nomatch:[%d filters]\n",
+	   g_remote,helo_domain,mailfrom,rcptto, i - 1);
+    if (NULL != (nomatch = getenv("SPP_FILTER_NOMATCH_CMD")))
+      envcmd(nomatch, NULL);
+  }
+
+_end:
+  closelog();
   return 0;
 }
